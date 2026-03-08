@@ -42,7 +42,7 @@ from src.transcriber import Segment
 # ---------------------------------------------------------------------------
 
 
-def _make_config() -> Config:
+def _make_config(cache_path: str = "processed_files.json") -> Config:
     return Config(
         discord=DiscordConfig(
             token="test-token",
@@ -56,7 +56,7 @@ def _make_config() -> Config:
         poster=PosterConfig(),
         logging=LoggingConfig(),
         google_drive=GoogleDriveConfig(),
-        pipeline=PipelineConfig(),
+        pipeline=PipelineConfig(minutes_cache_path=cache_path),
     )
 
 
@@ -97,8 +97,8 @@ def _make_segments() -> list[Segment]:
 
 
 @pytest.fixture
-def cfg() -> Config:
-    return _make_config()
+def cfg(tmp_path: Path) -> Config:
+    return _make_config(str(tmp_path / "processed_files.json"))
 
 
 @pytest.fixture
