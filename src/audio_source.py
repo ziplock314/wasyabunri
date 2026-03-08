@@ -8,7 +8,7 @@ import re
 import zipfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,8 @@ def extract_speaker_zip(zip_bytes: bytes, dest_dir: Path) -> list[SpeakerAudio]:
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         for name in zf.namelist():
-            match = ZIP_FILENAME_PATTERN.match(name)
+            basename = PurePosixPath(name).name
+            match = ZIP_FILENAME_PATTERN.match(basename)
             if not match:
                 logger.debug("Skipping non-audio ZIP entry: %s", name)
                 continue
@@ -61,7 +62,7 @@ def extract_speaker_zip(zip_bytes: bytes, dest_dir: Path) -> list[SpeakerAudio]:
             track_num = int(match.group(1))
             username = match.group(2)
 
-            dest_file = dest_dir / name
+            dest_file = dest_dir / basename
             # Zip Slip protection: ensure extracted path stays inside dest_dir
             if not dest_file.resolve().is_relative_to(dest_dir.resolve()):
                 logger.warning("Blocked Zip Slip attempt: %s", name)
