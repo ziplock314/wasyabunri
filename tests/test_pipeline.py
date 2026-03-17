@@ -14,9 +14,11 @@ import pytest
 
 from src.audio_source import SpeakerAudio, SpeakerInfo
 from src.config import (
+    CalendarConfig,
     Config,
     CraigConfig,
     DiscordConfig,
+    ExportGoogleDocsConfig,
     GeneratorConfig,
     GoogleDriveConfig,
     GuildConfig,
@@ -62,6 +64,8 @@ def _make_config(**overrides: object) -> Config:
         pipeline=PipelineConfig(),
         speaker_analytics=SpeakerAnalyticsConfig(),
         minutes_archive=MinutesArchiveConfig(),
+        export_google_docs=ExportGoogleDocsConfig(),
+        calendar=CalendarConfig(),
     )
     kwargs.update(overrides)
     return Config(**kwargs)

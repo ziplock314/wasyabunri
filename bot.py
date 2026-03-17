@@ -28,7 +28,7 @@ from src.minutes_archive import MinutesArchive
 from src.pipeline import run_pipeline, run_pipeline_from_tracks
 from src.poster import OutputChannel
 from src.state_store import StateStore
-from src.transcriber import Transcriber
+from src.transcriber import Transcriber, create_transcriber
 
 logger = logging.getLogger("minutes_bot")
 
@@ -125,6 +125,7 @@ class MinutesBot(discord.Client):
         generator: MinutesGenerator,
         state_store: StateStore,
         archive: MinutesArchive | None = None,
+        exporter: object | None = None,
         **kwargs: object,
     ) -> None:
         self.cfg = cfg
@@ -132,6 +133,7 @@ class MinutesBot(discord.Client):
         self.generator = generator
         self.state_store = state_store
         self.archive = archive
+        self.exporter = exporter
         self.http_session: aiohttp.ClientSession | None = None
         self.drive_watcher: DriveWatcher | None = None
         self._start_time = time.monotonic()
@@ -206,6 +208,7 @@ class MinutesBot(discord.Client):
                         source_label=source_label,
                         template_name=template_name,
                         archive=self.archive,
+                        exporter=self.exporter,
                     )
 
                 self.drive_watcher = DriveWatcher(
@@ -327,6 +330,7 @@ class MinutesBot(discord.Client):
                 state_store=self.state_store,
                 template_name=template_name,
                 archive=self.archive,
+                exporter=self.exporter,
             ),
             name=f"pipeline-{rec_id}",
         )
@@ -368,9 +372,12 @@ def register_commands(client: MinutesBot, tree: discord.app_commands.CommandTree
 
         guild_cfg = client.cfg.discord.get_guild(interaction.guild_id or 0)
 
+        backend = getattr(client.transcriber, 'backend_name', 'local')
+        model = getattr(client.transcriber, 'model_name', client.cfg.whisper.model)
+
         lines = [
             f"**Uptime**: {hours}h {minutes}m {seconds}s",
-            f"**Whisper model**: {client.cfg.whisper.model} ({'loaded' if client.transcriber.is_loaded else 'not loaded'})",
+            f"**Whisper backend**: {backend} ({model}, {'loaded' if client.transcriber.is_loaded else 'not loaded'})",
             f"**GPU**: {'available' if gpu_available else 'not available'}",
             f"**Generator**: {client.cfg.generator.model} ({'ready' if client.generator.is_loaded else 'not ready'})",
         ]
@@ -557,6 +564,24 @@ def register_commands(client: MinutesBot, tree: discord.app_commands.CommandTree
         embed.set_footer(text=f"{len(results)}件 / {total}件のアーカイブから検索")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @group.command(name="calendar-status", description="カレンダー連携の状態を表示")
+    async def minutes_calendar_status(interaction: discord.Interaction) -> None:
+        cal_cfg = client.cfg.calendar
+        if not cal_cfg.enabled:
+            await interaction.response.send_message(
+                "カレンダー連携は**無効**です。\nconfig.yamlの `calendar.enabled` を `true` に設定してください。",
+                ephemeral=True,
+            )
+            return
+
+        lines = [
+            "**カレンダー連携**: 有効",
+            f"**カレンダーID**: `{cal_cfg.calendar_id}`",
+            f"**タイムゾーン**: {cal_cfg.timezone}",
+            f"**マッチ許容範囲**: 前後{cal_cfg.match_tolerance_minutes}分",
+        ]
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
     tree.add_command(group)
 
 
@@ -598,8 +623,8 @@ def main() -> None:
         logger.info("Cleaned up %d stale processing entries", stale_count)
     logger.info("StateStore ready (%d entries)", state_store.processing_count)
 
-    # Preload Whisper model (keeps it resident in VRAM)
-    transcriber = Transcriber(cfg.whisper)
+    # Preload transcriber (factory selects local or API backend)
+    transcriber = create_transcriber(cfg.whisper)
     transcriber.load_model()
 
     # Initialise minutes generator
@@ -613,6 +638,13 @@ def main() -> None:
         archive = MinutesArchive(archive_path)
         logger.info("MinutesArchive enabled at %s", archive_path)
 
+    # Initialise Google Docs exporter
+    exporter = None
+    if cfg.export_google_docs.enabled:
+        from src.exporter import GoogleDocsExporter
+        exporter = GoogleDocsExporter(cfg.export_google_docs)
+        logger.info("Google Docs exporter enabled (folder_id=%s)", cfg.export_google_docs.folder_id)
+
     # Create client with required intents
     intents = discord.Intents.default()
     intents.guilds = True
@@ -625,6 +657,7 @@ def main() -> None:
         generator=generator,
         state_store=state_store,
         archive=archive,
+        exporter=exporter,
         intents=intents,
     )
 

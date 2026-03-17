@@ -53,6 +53,7 @@ async def run_pipeline_from_tracks(
     source_label: str = "unknown",
     template_name: str = "minutes",
     archive: MinutesArchive | None = None,
+    exporter: object | None = None,
 ) -> None:
     """Execute stages 2-5 (transcribe -> merge -> generate -> post) on pre-downloaded tracks.
 
@@ -96,6 +97,36 @@ async def run_pipeline_from_tracks(
                     f"Transcription produced empty result for source {source_label}"
                 )
 
+            # Stage 3.5: Calendar event fetch (optional, non-blocking)
+            event_title = ""
+            event_attendees = ""
+            event_description = ""
+
+            if cfg.calendar.enabled:
+                try:
+                    from src.calendar_client import CalendarClient, estimate_recording_window
+
+                    rec_start, rec_end = estimate_recording_window(
+                        segments, datetime.now(), cfg.calendar.timezone,
+                    )
+                    calendar_client = CalendarClient(cfg.calendar)
+                    cal_result = await calendar_client.fetch_event(rec_start, rec_end)
+
+                    if cal_result.event:
+                        event_title = cal_result.event.title
+                        event_attendees = ", ".join(cal_result.event.attendees)
+                        event_description = cal_result.event.description
+                        logger.info(
+                            "Calendar event matched: '%s' (%d candidates)",
+                            event_title, cal_result.candidates_count,
+                        )
+                    elif cal_result.error:
+                        logger.warning("Calendar fetch error: %s", cal_result.error)
+                    else:
+                        logger.info("No calendar event found for recording window")
+                except Exception:
+                    logger.warning("Calendar integration failed (non-critical)", exc_info=True)
+
             # Stage 4: Generate minutes (with cache)
             speakers_str = ", ".join(speaker_names)
             date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -122,6 +153,9 @@ async def run_pipeline_from_tracks(
                     guild_name=guild_name,
                     channel_name=output_channel.name,
                     template_name=template_name,
+                    event_title=event_title,
+                    event_attendees=event_attendees,
+                    event_description=event_description,
                 )
                 state_store.put_cached_minutes(th, minutes_md)
             else:
@@ -141,6 +175,7 @@ async def run_pipeline_from_tracks(
                 cfg=cfg.poster,
                 speaker_stats=speaker_stats_text,
                 transcript_md=transcript_md,
+                event_title=event_title or None,
             )
 
             # Archive (fault-tolerant)
@@ -159,6 +194,22 @@ async def run_pipeline_from_tracks(
                     )
                 except Exception:
                     logger.warning("Archive write failed (non-critical)", exc_info=True)
+
+            # Export to Google Docs (fault-tolerant)
+            if exporter is not None and cfg.export_google_docs.enabled:
+                try:
+                    title = f"Meeting Minutes — {date_str}"
+                    export_result = await exporter.export(
+                        minutes_md=minutes_md,
+                        title=title,
+                        metadata={"date": date_str, "speakers": speakers_str, "source": source_label},
+                    )
+                    if export_result.success:
+                        logger.info("Minutes exported to Google Docs: %s", export_result.url)
+                    else:
+                        logger.warning("Google Docs export failed (non-critical): %s", export_result.error)
+                except Exception:
+                    logger.warning("Google Docs export raised unexpected error (non-critical)", exc_info=True)
 
         # Clean up status message
         if status_msg:
@@ -245,6 +296,7 @@ async def run_pipeline(
     state_store: StateStore,
     template_name: str = "minutes",
     archive: MinutesArchive | None = None,
+    exporter: object | None = None,
 ) -> None:
     """Execute the full pipeline from Craig download through Discord posting."""
     status_msg: discord.Message | None = None
@@ -286,6 +338,7 @@ async def run_pipeline(
                 source_label=f"craig:{recording.rec_id}",
                 template_name=template_name,
                 archive=archive,
+                exporter=exporter,
             )
 
     except MinutesBotError as exc:

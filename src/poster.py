@@ -54,6 +54,7 @@ def build_minutes_embed(
     speakers: str,
     cfg: PosterConfig,
     speaker_stats: str | None = None,
+    event_title: str | None = None,
 ) -> discord.Embed:
     """Build a Discord embed summarising the generated minutes."""
     summary = _extract_section(minutes_md, _SUMMARY_PATTERN)
@@ -64,6 +65,14 @@ def build_minutes_embed(
         color=cfg.embed_color,
         timestamp=datetime.now(),
     )
+
+    # Meeting name from calendar
+    if event_title:
+        embed.add_field(
+            name="会議名",
+            value=event_title,
+            inline=False,
+        )
 
     # Participants
     if speakers:
@@ -195,6 +204,7 @@ async def post_minutes(
     cfg: PosterConfig,
     speaker_stats: str | None = None,
     transcript_md: str | None = None,
+    event_title: str | None = None,
 ) -> discord.Message:
     """Post minutes embed + markdown file(s) to the channel.
 
@@ -203,7 +213,7 @@ async def post_minutes(
     When *transcript_md* is provided, attaches both minutes and transcript files.
     Retries on Discord rate limits. Returns the sent message.
     """
-    embed = build_minutes_embed(minutes_md, date, speakers, cfg, speaker_stats=speaker_stats)
+    embed = build_minutes_embed(minutes_md, date, speakers, cfg, speaker_stats=speaker_stats, event_title=event_title)
 
     mention_text = " ".join(f"<@{uid}>" for uid in cfg.mention_user_ids) or None
 

@@ -48,6 +48,16 @@ class DriveWatchError(MinutesBotError):
         super().__init__(message, stage="drive_watch")
 
 
+class ExportError(MinutesBotError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, stage="export")
+
+
+class CalendarError(MinutesBotError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, stage="calendar")
+
+
 class ConfigError(MinutesBotError):
     def __init__(self, message: str) -> None:
         super().__init__(message, stage="config")

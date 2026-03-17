@@ -129,6 +129,9 @@ class MinutesGenerator:
         guild_name: str = "",
         channel_name: str = "",
         template_name: str = "minutes",
+        event_title: str = "",
+        event_attendees: str = "",
+        event_description: str = "",
     ) -> str:
         """Fill in template variables and return the rendered prompt.
 
@@ -144,6 +147,9 @@ class MinutesGenerator:
             "{speakers}": speakers,
             "{guild_name}": guild_name,
             "{channel_name}": channel_name,
+            "{event_title}": event_title,
+            "{event_attendees}": event_attendees,
+            "{event_description}": event_description,
         }
         result = template
         for placeholder, value in replacements.items():
@@ -158,6 +164,9 @@ class MinutesGenerator:
         guild_name: str = "",
         channel_name: str = "",
         template_name: str = "minutes",
+        event_title: str = "",
+        event_attendees: str = "",
+        event_description: str = "",
     ) -> str:
         """Generate meeting minutes from a transcript.
 
@@ -174,6 +183,9 @@ class MinutesGenerator:
             guild_name=guild_name,
             channel_name=channel_name,
             template_name=template_name,
+            event_title=event_title,
+            event_attendees=event_attendees,
+            event_description=event_description,
         )
 
         last_exc: Exception | None = None

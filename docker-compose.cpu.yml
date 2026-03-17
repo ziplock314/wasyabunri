@@ -1,0 +1,13 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    container_name: discord-minutes-bot
+    restart: on-failure
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - ./credentials.json:/app/credentials.json:ro
+      - ./state:/app/state
+      - ./logs:/app/logs

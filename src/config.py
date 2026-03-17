@@ -81,6 +81,10 @@ class WhisperConfig:
     compute_type: str = "float16"
     beam_size: int = 5
     vad_filter: bool = True
+    backend: str = "local"
+    api_model: str = "whisper-1"
+    api_max_retries: int = 2
+    api_timeout_sec: int = 300
 
 
 @dataclass(frozen=True)
@@ -144,6 +148,25 @@ class MinutesArchiveConfig:
 
 
 @dataclass(frozen=True)
+class ExportGoogleDocsConfig:
+    enabled: bool = False
+    credentials_path: str = "credentials.json"
+    folder_id: str = ""
+    max_retries: int = 3
+
+
+@dataclass(frozen=True)
+class CalendarConfig:
+    enabled: bool = False
+    credentials_path: str = "credentials.json"
+    calendar_id: str = "primary"
+    timezone: str = "Asia/Tokyo"
+    match_tolerance_minutes: int = 30
+    api_timeout_sec: int = 10
+    max_retries: int = 2
+
+
+@dataclass(frozen=True)
 class Config:
     discord: DiscordConfig
     craig: CraigConfig
@@ -156,6 +179,8 @@ class Config:
     pipeline: PipelineConfig
     speaker_analytics: SpeakerAnalyticsConfig
     minutes_archive: MinutesArchiveConfig
+    export_google_docs: ExportGoogleDocsConfig
+    calendar: CalendarConfig
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +199,8 @@ _SECTION_CLASSES: dict[str, type] = {
     "pipeline": PipelineConfig,
     "speaker_analytics": SpeakerAnalyticsConfig,
     "minutes_archive": MinutesArchiveConfig,
+    "export_google_docs": ExportGoogleDocsConfig,
+    "calendar": CalendarConfig,
 }
 
 
@@ -334,11 +361,6 @@ def _validate(cfg: Config) -> None:
             errors.append(f"{prefix}.output_channel_id must be a positive integer")
 
     # Whisper
-    if cfg.whisper.model not in VALID_WHISPER_MODELS:
-        errors.append(
-            f"whisper.model '{cfg.whisper.model}' is not valid. "
-            f"Choose from: {sorted(VALID_WHISPER_MODELS)}"
-        )
     if cfg.whisper.beam_size < 1:
         errors.append("whisper.beam_size must be >= 1")
     if cfg.whisper.language not in VALID_WHISPER_LANGUAGES:
@@ -371,12 +393,42 @@ def _validate(cfg: Config) -> None:
     if cfg.poster.chunk_size < 1:
         errors.append("poster.chunk_size must be >= 1")
 
+    # Whisper backend
+    if cfg.whisper.backend not in ("local", "api"):
+        errors.append("whisper.backend must be 'local' or 'api'")
+    if cfg.whisper.backend == "api":
+        if not os.environ.get("OPENAI_API_KEY", ""):
+            errors.append("OPENAI_API_KEY is required when whisper.backend is 'api'")
+        if cfg.whisper.api_timeout_sec < 10:
+            errors.append("whisper.api_timeout_sec must be >= 10")
+    elif cfg.whisper.backend == "local":
+        if cfg.whisper.model not in VALID_WHISPER_MODELS:
+            errors.append(
+                f"whisper.model '{cfg.whisper.model}' is not valid. "
+                f"Choose from: {sorted(VALID_WHISPER_MODELS)}"
+            )
+
     # Google Drive (only validate when enabled)
     if cfg.google_drive.enabled:
         if not cfg.google_drive.folder_id:
             errors.append("google_drive.folder_id is required when google_drive.enabled is true")
         if cfg.google_drive.poll_interval_sec < 5:
             errors.append("google_drive.poll_interval_sec must be >= 5")
+
+    # Export Google Docs (only validate when enabled)
+    if cfg.export_google_docs.enabled:
+        if not cfg.export_google_docs.folder_id:
+            errors.append(
+                "export_google_docs.folder_id is required when "
+                "export_google_docs.enabled is true"
+            )
+
+    # Calendar (only validate when enabled)
+    if cfg.calendar.enabled:
+        if not cfg.calendar.calendar_id:
+            errors.append("calendar.calendar_id is required when calendar.enabled is true")
+        if cfg.calendar.match_tolerance_minutes < 0:
+            errors.append("calendar.match_tolerance_minutes must be >= 0")
 
     if errors:
         raise ConfigError("Configuration validation failed:\n  - " + "\n  - ".join(errors))

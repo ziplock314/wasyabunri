@@ -64,6 +64,14 @@ class Transcriber:
     def is_loaded(self) -> bool:
         return self._model is not None
 
+    @property
+    def backend_name(self) -> str:
+        return "local"
+
+    @property
+    def model_name(self) -> str:
+        return self._cfg.model
+
     def transcribe_file(self, audio_path: Path, speaker_name: str) -> list[Segment]:
         """Transcribe a single audio file and return segments tagged with *speaker_name*."""
         if self._model is None:
@@ -151,3 +159,11 @@ class Transcriber:
             len(tracks),
         )
         return all_segments
+
+
+def create_transcriber(cfg: WhisperConfig):
+    """Create the appropriate transcriber based on config backend setting."""
+    if cfg.backend == "api":
+        from src.transcriber_api import TranscriberAPI
+        return TranscriberAPI(cfg)
+    return Transcriber(cfg)
