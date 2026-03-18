@@ -653,3 +653,78 @@ class TestPipelineArchive:
             )
 
         mock_archive.store.assert_not_called()
+
+
+class TestPipelineErrorRoleParam:
+    @pytest.mark.asyncio
+    async def test_error_role_param_passed_to_post_error(
+        self,
+        cfg: Config,
+        recording: DetectedRecording,
+        mock_session: MagicMock,
+        mock_channel: MagicMock,
+        mock_transcriber: MagicMock,
+        mock_generator: MagicMock,
+        state_store: StateStore,
+        tmp_path: Path,
+    ) -> None:
+        """error_mention_role_id parameter is forwarded to post_error on failure."""
+        tracks = _make_tracks(tmp_path)
+        mock_generator.generate.side_effect = GenerationError("API error")
+
+        with (
+            patch("src.pipeline._stage_download", new_callable=AsyncMock) as mock_dl,
+            patch("src.pipeline.post_error", new_callable=AsyncMock) as mock_post_err,
+        ):
+            mock_dl.return_value = tracks
+
+            with pytest.raises(GenerationError):
+                await run_pipeline(
+                    recording=recording,
+                    session=mock_session,
+                    cfg=cfg,
+                    transcriber=mock_transcriber,
+                    generator=mock_generator,
+                    output_channel=mock_channel,
+                    state_store=state_store,
+                    error_mention_role_id=12345,
+                )
+
+        mock_post_err.assert_called_once()
+        assert mock_post_err.call_args.kwargs["error_mention_role_id"] == 12345
+
+    @pytest.mark.asyncio
+    async def test_error_role_param_default_none(
+        self,
+        cfg: Config,
+        recording: DetectedRecording,
+        mock_session: MagicMock,
+        mock_channel: MagicMock,
+        mock_transcriber: MagicMock,
+        mock_generator: MagicMock,
+        state_store: StateStore,
+        tmp_path: Path,
+    ) -> None:
+        """error_mention_role_id defaults to None when not provided."""
+        tracks = _make_tracks(tmp_path)
+        mock_generator.generate.side_effect = GenerationError("API error")
+
+        with (
+            patch("src.pipeline._stage_download", new_callable=AsyncMock) as mock_dl,
+            patch("src.pipeline.post_error", new_callable=AsyncMock) as mock_post_err,
+        ):
+            mock_dl.return_value = tracks
+
+            with pytest.raises(GenerationError):
+                await run_pipeline(
+                    recording=recording,
+                    session=mock_session,
+                    cfg=cfg,
+                    transcriber=mock_transcriber,
+                    generator=mock_generator,
+                    output_channel=mock_channel,
+                    state_store=state_store,
+                )
+
+        mock_post_err.assert_called_once()
+        assert mock_post_err.call_args.kwargs["error_mention_role_id"] is None
