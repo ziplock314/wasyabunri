@@ -14,8 +14,14 @@ discord:
       watch_channel_id: 1044060217882726470
       # Channel ID where meeting minutes will be posted
       output_channel_id: 1395775686924570655
+      # Per-guild error mention role (optional, overrides global setting)
+      # error_mention_role_id: 123456789
+      # Per-guild Google Drive monitoring (optional, overrides global google_drive)
+      # google_drive:
+      #   enabled: true
+      #   folder_id: "per_guild_drive_folder_id"
 
-  # Role ID to mention when errors occur (optional, set to null to disable)
+  # Role ID to mention when errors occur (optional, global fallback)
   error_mention_role_id: null
 
 craig:
