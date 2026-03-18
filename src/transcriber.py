@@ -64,6 +64,14 @@ class Transcriber:
     def is_loaded(self) -> bool:
         return self._model is not None
 
+    @property
+    def backend_name(self) -> str:
+        return "local"
+
+    @property
+    def model_name(self) -> str:
+        return self._cfg.model
+
     def transcribe_file(self, audio_path: Path, speaker_name: str) -> list[Segment]:
         """Transcribe a single audio file and return segments tagged with *speaker_name*."""
         if self._model is None:
@@ -77,9 +85,10 @@ class Transcriber:
         t0 = time.monotonic()
 
         try:
+            language = None if self._cfg.language == "auto" else self._cfg.language
             segments_iter, info = self._model.transcribe(
                 str(path),
-                language=self._cfg.language,
+                language=language,
                 beam_size=self._cfg.beam_size,
                 vad_filter=self._cfg.vad_filter,
             )
@@ -150,3 +159,11 @@ class Transcriber:
             len(tracks),
         )
         return all_segments
+
+
+def create_transcriber(cfg: WhisperConfig):
+    """Create the appropriate transcriber based on config backend setting."""
+    if cfg.backend == "api":
+        from src.transcriber_api import TranscriberAPI
+        return TranscriberAPI(cfg)
+    return Transcriber(cfg)

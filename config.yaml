@@ -35,18 +35,26 @@ craig:
   max_retries: 2
 
 whisper:
+  # Backend: "local" (faster-whisper GPU) or "api" (OpenAI Speech-to-Text API)
+  backend: "local"
   # Model size: tiny, base, small, medium, large-v1, large-v2, large-v3, etc.
   model: "large-v3"
-  # Language code (ISO 639-1): ja, en, zh, etc.
-  language: "ja"
-  # Device: cuda or cpu
+  # Language: "ja", "en", "auto" (auto-detect), or other ISO 639-1 codes
+  language: "auto"
+  # Device: cuda or cpu (local backend only)
   device: "cuda"
-  # Compute type: float16, int8, int8_float16, float32
+  # Compute type: float16, int8, int8_float16, float32 (local backend only)
   compute_type: "float16"
-  # Beam size for decoding (higher = more accurate but slower)
+  # Beam size for decoding (higher = more accurate but slower, local backend only)
   beam_size: 5
-  # Enable Voice Activity Detection to skip silence
+  # Enable Voice Activity Detection to skip silence (local backend only)
   vad_filter: true
+  # OpenAI API model name (api backend only)
+  api_model: "whisper-1"
+  # Maximum retry attempts for API calls (api backend only)
+  api_max_retries: 2
+  # Timeout in seconds per API request (api backend only)
+  api_timeout_sec: 300
 
 merger:
   # Timestamp format in transcript (available: {mm}, {ss}, {hh})
@@ -60,7 +68,7 @@ generator:
   # Anthropic model for minutes generation
   model: "claude-sonnet-4-5-20250929"
   # Maximum tokens in the generated response
-  max_tokens: 4096
+  max_tokens: 8192
   # Temperature (0.0 = deterministic, 1.0 = creative)
   temperature: 0.3
   # Path to the prompt template file
@@ -76,7 +84,7 @@ poster:
   # Maximum characters per embed description
   max_embed_length: 4000
   # Whether to include the full transcript as a follow-up message
-  include_transcript: false
+  include_transcript: true
   # Maximum characters per message chunk (Discord limit is 2000)
   chunk_size: 1990
 
@@ -93,6 +101,42 @@ logging:
   max_bytes: 10485760
   # Number of rotated log files to keep
   backup_count: 5
+
+speaker_analytics:
+  # Enable speaker statistics in minutes embed
+  enabled: true
+
+minutes_archive:
+  # Enable local SQLite archive of generated minutes
+  enabled: true
+  # Maximum search results for /minutes search
+  max_search_results: 5
+
+export_google_docs:
+  # Enable export of minutes to Google Docs
+  enabled: false
+  # Path to service account JSON key file
+  credentials_path: "credentials.json"
+  # Google Drive folder ID for exported documents
+  folder_id: ""
+  # Maximum retry attempts on export failure
+  max_retries: 3
+
+calendar:
+  # Enable Google Calendar integration (auto-match meetings)
+  enabled: false
+  # Path to service account JSON key file
+  credentials_path: "credentials.json"
+  # Google Calendar ID to query
+  calendar_id: "primary"
+  # Timezone for recording window estimation
+  timezone: "Asia/Tokyo"
+  # Minutes of tolerance when matching events to recordings
+  match_tolerance_minutes: 30
+  # API request timeout in seconds
+  api_timeout_sec: 10
+  # Maximum retry attempts
+  max_retries: 2
 
 google_drive:
   # Enable Google Drive folder monitoring
