@@ -105,12 +105,12 @@ def parse_recording_ended(
     """Top-level detection: check all conditions and return DetectedRecording or None.
 
     Checks in order:
-      1. Channel matches the configured watch channel
+      1. Channel matches the configured watch channel (0 = any channel)
       2. Message is from Craig Bot
       3. Components indicate recording has ended
       4. A valid recording URL can be extracted
     """
-    if channel_id != watch_channel_id:
+    if watch_channel_id and channel_id != watch_channel_id:
         return None
 
     if not is_craig_message(payload_data):

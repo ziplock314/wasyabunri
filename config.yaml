@@ -10,8 +10,8 @@ discord:
   # still supported for backward compatibility.
   guilds:
     - guild_id: 1027141726340657243
-      # Channel ID where Craig Bot posts recording messages
-      watch_channel_id: 1044060217882726470
+      # Channel ID where Craig Bot posts recording messages (0 = monitor all channels)
+      # watch_channel_id: 1044060217882726470
       # Channel ID where meeting minutes will be posted
       output_channel_id: 1395775686924570655
       # Per-guild error mention role (optional, overrides global setting)
