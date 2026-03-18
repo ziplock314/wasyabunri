@@ -51,8 +51,8 @@ class GuildConfig:
     """Per-guild configuration (guild ID, watch channel, output channel)."""
 
     guild_id: int
-    watch_channel_id: int
     output_channel_id: int
+    watch_channel_id: int = 0  # 0 = monitor all channels in this guild
     template: str = "minutes"
     error_mention_role_id: int | None = None
     google_drive: GuildDriveConfig | None = None
@@ -394,8 +394,8 @@ def _validate(cfg: Config) -> None:
             errors.append(f"{prefix}.guild_id {guild.guild_id} is duplicated")
         else:
             seen_guild_ids.add(guild.guild_id)
-        if guild.watch_channel_id <= 0:
-            errors.append(f"{prefix}.watch_channel_id must be a positive integer")
+        if guild.watch_channel_id < 0:
+            errors.append(f"{prefix}.watch_channel_id must be 0 (all channels) or a positive integer")
         if guild.output_channel_id <= 0:
             errors.append(f"{prefix}.output_channel_id must be a positive integer")
 
