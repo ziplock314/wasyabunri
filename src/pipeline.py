@@ -143,9 +143,9 @@ async def run_pipeline_from_tracks(
             speakers_str = ", ".join(speaker_names)
             date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-            # Prepare transcript markdown for attachment (if enabled)
+            # Prepare transcript markdown for attachment or Google Docs tab
             transcript_md: str | None = None
-            if cfg.poster.include_transcript:
+            if cfg.poster.include_transcript or cfg.export_google_docs.enabled:
                 transcript_md = format_transcript_markdown(
                     transcript, date_str, speakers_str,
                 )
@@ -215,6 +215,7 @@ async def run_pipeline_from_tracks(
                         minutes_md=minutes_md,
                         title=title,
                         metadata={"date": date_str, "speakers": speakers_str, "source": source_label},
+                        transcript_md=transcript_md,
                     )
                     if export_result.success:
                         logger.info("Minutes exported to Google Docs: %s", export_result.url)
