@@ -279,9 +279,17 @@ class GoogleDocsExporter:
         ).execute()
         return result["replies"][0]["addDocumentTab"]["tabProperties"]["tabId"]
 
+    @staticmethod
+    def _normalize_timestamp(ts: str) -> str:
+        """Convert MM:SS or M:SS to HH:MM:SS for matching tab-2 headings."""
+        parts = ts.split(":")
+        if len(parts) == 2:
+            return f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
+        return ":".join(p.zfill(2) for p in parts)
+
     def _build_transcript_requests(
         self, transcript_md: str, tab_id: str,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, tuple[int, int]]]:
         """Convert transcript markdown to Google Docs API batchUpdate requests.
 
         Parses line-by-line:
@@ -291,13 +299,16 @@ class GoogleDocsExporter:
           - ``- metadata``       -> insertText (NORMAL_TEXT)
           - plain text / blank   -> insertText (NORMAL_TEXT)
 
-        Returns ordered requests for forward insertion starting at index 1.
+        Returns (requests, heading_offsets) where heading_offsets maps
+        ``HH:MM:SS`` timestamp strings to ``(start_index, end_index)`` tuples
+        (excluding the trailing newline) for use with createNamedRange.
         """
         re_h1 = re.compile(r"^# (.+)$")
         re_h3 = re.compile(r"^### (.+)$")
         re_speaker = re.compile(r"^\*\*(.+?):\*\*\s*(.*)$")
 
         requests: list[dict[str, Any]] = []
+        heading_offsets: dict[str, tuple[int, int]] = {}
         offset = 1  # New tab starts at index 1
 
         lines = transcript_md.splitlines()
@@ -328,8 +339,10 @@ class GoogleDocsExporter:
                 offset += text_len
 
             elif m_h3:
-                text = m_h3.group(1) + "\n"
+                ts_text = m_h3.group(1)
+                text = ts_text + "\n"
                 text_len = self._utf16_len(text)
+                heading_offsets[ts_text] = (offset, offset + text_len - 1)
                 requests.append({
                     "insertText": {
                         "text": text,
@@ -416,15 +429,19 @@ class GoogleDocsExporter:
             }
         })
 
-        return requests
+        return requests, heading_offsets
 
     def _write_transcript_content_sync(
         self, doc_id: str, tab_id: str, transcript_md: str,
-    ) -> None:
-        """Write formatted transcript content into the specified tab."""
-        requests = self._build_transcript_requests(transcript_md, tab_id)
+    ) -> dict[str, tuple[int, int]]:
+        """Write formatted transcript content into the specified tab.
+
+        Returns heading_offsets mapping HH:MM:SS timestamp strings to
+        (start_index, end_index) for subsequent named range creation.
+        """
+        requests, heading_offsets = self._build_transcript_requests(transcript_md, tab_id)
         if not requests:
-            return
+            return {}
 
         # Google Docs API allows up to 200 requests per batchUpdate
         batch_size = 200
@@ -435,14 +452,64 @@ class GoogleDocsExporter:
                 documentId=doc_id,
                 body={"requests": chunk},
             ).execute()
+        return heading_offsets
+
+    def _create_heading_named_ranges_sync(
+        self,
+        doc_id: str,
+        tab_id: str,
+        heading_offsets: dict[str, tuple[int, int]],
+    ) -> dict[str, str]:
+        """Create named ranges at each transcript heading for deep-linking.
+
+        Returns a mapping of ``HH:MM:SS`` timestamp strings to namedRangeIds.
+        """
+        if not heading_offsets:
+            return {}
+
+        docs_service = self._build_docs_service()
+        ts_list = list(heading_offsets.keys())
+        batch_requests = [
+            {
+                "createNamedRange": {
+                    "name": f"ts_{ts.replace(':', '_')}",
+                    "range": {
+                        "segmentId": "",
+                        "startIndex": start,
+                        "endIndex": end,
+                        "tabId": tab_id,
+                    },
+                }
+            }
+            for ts, (start, end) in heading_offsets.items()
+        ]
+
+        response = docs_service.documents().batchUpdate(
+            documentId=doc_id,
+            body={"requests": batch_requests},
+        ).execute()
+
+        result: dict[str, str] = {}
+        for ts, reply in zip(ts_list, response.get("replies", [])):
+            nr_id = reply.get("createNamedRange", {}).get("namedRangeId", "")
+            if nr_id:
+                result[ts] = nr_id
+        logger.debug("Created %d heading named ranges", len(result))
+        return result
 
     def _update_timestamp_links_sync(
-        self, doc_id: str, tab_id: str, doc_url: str,
+        self,
+        doc_id: str,
+        tab_id: str,
+        doc_url: str,
+        named_range_ids: dict[str, str] | None = None,
     ) -> None:
         """Add transcript tab links to timestamp text in the memo tab.
 
         Reads the memo tab (t.0), finds timestamp patterns like ``[01:29]``,
         and adds a hyperlink to the transcript tab using ``updateTextStyle``.
+        When *named_range_ids* is provided, each timestamp is linked directly
+        to its corresponding heading via a ``#namedrange=`` URL fragment.
         """
         # Build tab URL: strip existing query params, add ?tab=
         base_url = doc_url.split("?")[0]
@@ -470,7 +537,7 @@ class GoogleDocsExporter:
             return
 
         # Extract full text with character offsets
-        ts_pattern = re.compile(r"\[[\d:]+\]")
+        ts_pattern = re.compile(r"\[([\d:]+)\]")
         requests: list[dict[str, Any]] = []
 
         for element in body_content:
@@ -486,10 +553,20 @@ class GoogleDocsExporter:
                 for m in ts_pattern.finditer(text):
                     abs_start = start_idx + m.start()
                     abs_end = start_idx + m.end()
+
+                    # Resolve deep link if named range exists for this timestamp
+                    ts_raw = m.group(1)
+                    ts_normalized = self._normalize_timestamp(ts_raw)
+                    if named_range_ids and ts_normalized in named_range_ids:
+                        nr_id = named_range_ids[ts_normalized]
+                        link_url = f"{base_url}?tab={tab_id}#namedrange={nr_id}"
+                    else:
+                        link_url = target_url
+
                     requests.append({
                         "updateTextStyle": {
                             "textStyle": {
-                                "link": {"url": target_url},
+                                "link": {"url": link_url},
                             },
                             "range": {
                                 "segmentId": "",
@@ -676,12 +753,26 @@ class GoogleDocsExporter:
                 )
                 tab_created = True
 
-                await asyncio.to_thread(
+                heading_offsets = await asyncio.to_thread(
                     self._write_transcript_content_sync,
                     doc_id, tab_id, transcript_md,
                 )
+
+                named_range_ids: dict[str, str] = {}
+                if heading_offsets:
+                    try:
+                        named_range_ids = await asyncio.to_thread(
+                            self._create_heading_named_ranges_sync,
+                            doc_id, tab_id, heading_offsets,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Named range creation failed (non-critical): %s", exc
+                        )
+
                 await asyncio.to_thread(
-                    self._update_timestamp_links_sync, doc_id, tab_id, url,
+                    self._update_timestamp_links_sync,
+                    doc_id, tab_id, url, named_range_ids or None,
                 )
                 # Convert Unicode checkboxes to native Google Docs checklists
                 try:

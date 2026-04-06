@@ -208,6 +208,7 @@ async def _run_stages_merge_to_post(
                     channel_name=output_channel.name,
                     template_name=template_name,
                     transcript_hash=th,
+                    transcript_md=transcript_md or "",
                     message_id=message.id if message else None,
                 )
             except Exception:
