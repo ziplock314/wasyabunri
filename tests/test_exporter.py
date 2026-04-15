@@ -707,8 +707,12 @@ class TestTimestampLinks:
         assert link_url == "https://docs.google.com/document/d/doc-123/edit?tab=t.abc456"
         assert "usp=" not in link_url
 
-    def test_update_timestamp_links_floor_match(self) -> None:
-        """Timestamps link to the nearest preceding heading (floor match)."""
+    def test_update_timestamp_links_heading_match(self) -> None:
+        """Timestamps link to the matching heading via #heading= fragment.
+
+        Exact matches hit their own heading; off-boundary timestamps
+        floor-match to the nearest preceding heading.
+        """
         exp = _make_exporter()
 
         mock_docs = MagicMock()
@@ -724,7 +728,7 @@ class TestTimestampLinks:
                                     "textRun": {
                                         "content": (
                                             "a [00:00:00] b [00:01:24] "
-                                            "c [00:03:00] d [00:04:52]"
+                                            "c [00:02:26] d [00:04:52]"
                                         ),
                                     },
                                 }]
@@ -737,14 +741,15 @@ class TestTimestampLinks:
         mock_docs.documents().batchUpdate.return_value.execute.return_value = {}
         exp._docs_service = mock_docs
 
-        named_range_ids = {
-            "00:00:00": "nr_zero",
-            "00:03:00": "nr_three",
+        heading_ids = {
+            "00:00:00": "h.zero",
+            "00:01:24": "h.one",
+            "00:02:26": "h.two",
         }
         exp._update_timestamp_links_sync(
             "doc-1", "t.tx",
             "https://docs.google.com/document/d/doc-1/edit",
-            named_range_ids=named_range_ids,
+            heading_ids=heading_ids,
         )
 
         body = mock_docs.documents().batchUpdate.call_args[1]["body"]
@@ -754,11 +759,68 @@ class TestTimestampLinks:
         ]
         base = "https://docs.google.com/document/d/doc-1/edit?tab=t.tx"
         assert urls == [
-            f"{base}#namedrange=nr_zero",   # 00:00:00 → zero
-            f"{base}#namedrange=nr_zero",   # 00:01:24 → floor to zero
-            f"{base}#namedrange=nr_three",  # 00:03:00 → three
-            f"{base}#namedrange=nr_three",  # 00:04:52 → floor to three
+            f"{base}#heading=h.zero",  # 00:00:00 → exact
+            f"{base}#heading=h.one",   # 00:01:24 → exact
+            f"{base}#heading=h.two",   # 00:02:26 → exact
+            f"{base}#heading=h.two",   # 00:04:52 → floor to two
         ]
+
+    def test_fetch_heading_ids_sync(self) -> None:
+        """Heading IDs are extracted from the transcript tab."""
+        exp = _make_exporter()
+
+        mock_docs = MagicMock()
+        mock_docs.documents().get.return_value.execute.return_value = {
+            "tabs": [
+                {"tabProperties": {"tabId": "t.0"}},  # memo tab, ignored
+                {
+                    "tabProperties": {"tabId": "t.transcript"},
+                    "documentTab": {
+                        "body": {
+                            "content": [
+                                {
+                                    "paragraph": {
+                                        "paragraphStyle": {
+                                            "namedStyleType": "HEADING_1",
+                                            "headingId": "h.title",
+                                        },
+                                        "elements": [
+                                            {"textRun": {"content": "文字起こし\n"}}
+                                        ],
+                                    }
+                                },
+                                {
+                                    "paragraph": {
+                                        "paragraphStyle": {
+                                            "namedStyleType": "HEADING_3",
+                                            "headingId": "h.ts1",
+                                        },
+                                        "elements": [
+                                            {"textRun": {"content": "00:01:24\n"}}
+                                        ],
+                                    }
+                                },
+                                {
+                                    "paragraph": {
+                                        "paragraphStyle": {
+                                            "namedStyleType": "NORMAL_TEXT",
+                                        },
+                                        "elements": [
+                                            {"textRun": {"content": "**Alice:** hi\n"}}
+                                        ],
+                                    }
+                                },
+                            ]
+                        }
+                    },
+                },
+            ],
+        }
+        exp._docs_service = mock_docs
+
+        result = exp._fetch_heading_ids_sync("doc-1", "t.transcript")
+
+        assert result == {"文字起こし": "h.title", "00:01:24": "h.ts1"}
 
     @pytest.mark.asyncio
     async def test_export_calls_link_update_after_tab(self) -> None:

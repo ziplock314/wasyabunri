@@ -462,47 +462,50 @@ class GoogleDocsExporter:
             ).execute()
         return heading_offsets
 
-    def _create_heading_named_ranges_sync(
-        self,
-        doc_id: str,
-        tab_id: str,
-        heading_offsets: dict[str, tuple[int, int]],
+    def _fetch_heading_ids_sync(
+        self, doc_id: str, tab_id: str,
     ) -> dict[str, str]:
-        """Create named ranges at each transcript heading for deep-linking.
+        """Read back the transcript tab and extract heading IDs.
 
-        Returns a mapping of ``HH:MM:SS`` timestamp strings to namedRangeIds.
+        Google Docs auto-assigns a ``headingId`` (e.g. ``h.xxxxx``) to each
+        heading paragraph.  That ID is what URL fragments like
+        ``#heading=h.xxxxx`` navigate to — named ranges are *not*
+        addressable via URL.
+
+        Returns a dict mapping heading text (e.g. ``00:01:24``) to
+        ``headingId``.
         """
-        if not heading_offsets:
-            return {}
-
         docs_service = self._build_docs_service()
-        ts_list = list(heading_offsets.keys())
-        batch_requests = [
-            {
-                "createNamedRange": {
-                    "name": f"ts_{ts.replace(':', '_')}",
-                    "range": {
-                        "segmentId": "",
-                        "startIndex": start,
-                        "endIndex": end,
-                        "tabId": tab_id,
-                    },
-                }
-            }
-            for ts, (start, end) in heading_offsets.items()
-        ]
-
-        response = docs_service.documents().batchUpdate(
+        doc = docs_service.documents().get(
             documentId=doc_id,
-            body={"requests": batch_requests},
+            includeTabsContent=True,
         ).execute()
 
         result: dict[str, str] = {}
-        for ts, reply in zip(ts_list, response.get("replies", [])):
-            nr_id = reply.get("createNamedRange", {}).get("namedRangeId", "")
-            if nr_id:
-                result[ts] = nr_id
-        logger.debug("Created %d heading named ranges", len(result))
+        for tab in doc.get("tabs", []):
+            if tab.get("tabProperties", {}).get("tabId") != tab_id:
+                continue
+            body_content = (
+                tab.get("documentTab", {}).get("body", {}).get("content", [])
+            )
+            for element in body_content:
+                paragraph = element.get("paragraph")
+                if not paragraph:
+                    continue
+                style = paragraph.get("paragraphStyle", {})
+                if not style.get("namedStyleType", "").startswith("HEADING_"):
+                    continue
+                heading_id = style.get("headingId")
+                if not heading_id:
+                    continue
+                text = "".join(
+                    pe.get("textRun", {}).get("content", "")
+                    for pe in paragraph.get("elements", [])
+                ).strip()
+                if text:
+                    result[text] = heading_id
+            break
+        logger.debug("Fetched %d heading IDs from transcript tab", len(result))
         return result
 
     def _update_timestamp_links_sync(
@@ -510,27 +513,27 @@ class GoogleDocsExporter:
         doc_id: str,
         tab_id: str,
         doc_url: str,
-        named_range_ids: dict[str, str] | None = None,
+        heading_ids: dict[str, str] | None = None,
     ) -> None:
         """Add transcript tab links to timestamp text in the memo tab.
 
         Reads the memo tab (t.0), finds timestamp patterns like ``[01:29]``,
         and adds a hyperlink to the transcript tab using ``updateTextStyle``.
-        When *named_range_ids* is provided, each timestamp is linked to the
-        nearest preceding heading (floor match) via ``#namedrange=``.  This
-        handles minutes timestamps that fall between transcript section
-        boundaries (e.g. 3-minute intervals).
+        When *heading_ids* is provided (mapping ``HH:MM:SS`` → ``h.xxx``),
+        each timestamp is linked to the nearest preceding heading (floor
+        match) via ``#heading=h.xxx``.  Exact matches resolve directly;
+        floor match handles any off-boundary references.
         """
         # Build tab URL: strip existing query params, add ?tab=
         base_url = doc_url.split("?")[0]
         target_url = f"{base_url}?tab={tab_id}"
 
-        # Pre-sort heading named ranges by time for floor-match lookup
+        # Pre-sort heading IDs by time for floor-match lookup
         sorted_headings: list[tuple[int, str]] = []
-        if named_range_ids:
+        if heading_ids:
             sorted_headings = sorted(
-                (self._ts_to_seconds(ts), nr_id)
-                for ts, nr_id in named_range_ids.items()
+                (self._ts_to_seconds(ts), hid)
+                for ts, hid in heading_ids.items()
             )
 
         docs_service = self._build_docs_service()
@@ -574,14 +577,14 @@ class GoogleDocsExporter:
 
                     # Floor-match to nearest preceding heading
                     ts_secs = self._ts_to_seconds(m.group(1))
-                    nr_id: str | None = None
-                    for sec, nrid in sorted_headings:
+                    heading_id: str | None = None
+                    for sec, hid in sorted_headings:
                         if sec <= ts_secs:
-                            nr_id = nrid
+                            heading_id = hid
                         else:
                             break
-                    if nr_id:
-                        link_url = f"{base_url}?tab={tab_id}#namedrange={nr_id}"
+                    if heading_id:
+                        link_url = f"{base_url}?tab={tab_id}#heading={heading_id}"
                     else:
                         link_url = target_url
 
@@ -775,26 +778,24 @@ class GoogleDocsExporter:
                 )
                 tab_created = True
 
-                heading_offsets = await asyncio.to_thread(
+                await asyncio.to_thread(
                     self._write_transcript_content_sync,
                     doc_id, tab_id, transcript_md,
                 )
 
-                named_range_ids: dict[str, str] = {}
-                if heading_offsets:
-                    try:
-                        named_range_ids = await asyncio.to_thread(
-                            self._create_heading_named_ranges_sync,
-                            doc_id, tab_id, heading_offsets,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Named range creation failed (non-critical): %s", exc
-                        )
+                heading_ids: dict[str, str] = {}
+                try:
+                    heading_ids = await asyncio.to_thread(
+                        self._fetch_heading_ids_sync, doc_id, tab_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Heading ID fetch failed (non-critical): %s", exc
+                    )
 
                 await asyncio.to_thread(
                     self._update_timestamp_links_sync,
-                    doc_id, tab_id, url, named_range_ids or None,
+                    doc_id, tab_id, url, heading_ids or None,
                 )
                 # Convert Unicode checkboxes to native Google Docs checklists
                 try:
