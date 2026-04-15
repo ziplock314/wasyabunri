@@ -287,6 +287,14 @@ class GoogleDocsExporter:
             return f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
         return ":".join(p.zfill(2) for p in parts)
 
+    @staticmethod
+    def _ts_to_seconds(ts: str) -> int:
+        """Parse MM:SS or HH:MM:SS into total seconds."""
+        parts = [int(p) for p in ts.split(":")]
+        if len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+
     def _build_transcript_requests(
         self, transcript_md: str, tab_id: str,
     ) -> tuple[list[dict[str, Any]], dict[str, tuple[int, int]]]:
@@ -508,12 +516,22 @@ class GoogleDocsExporter:
 
         Reads the memo tab (t.0), finds timestamp patterns like ``[01:29]``,
         and adds a hyperlink to the transcript tab using ``updateTextStyle``.
-        When *named_range_ids* is provided, each timestamp is linked directly
-        to its corresponding heading via a ``#namedrange=`` URL fragment.
+        When *named_range_ids* is provided, each timestamp is linked to the
+        nearest preceding heading (floor match) via ``#namedrange=``.  This
+        handles minutes timestamps that fall between transcript section
+        boundaries (e.g. 3-minute intervals).
         """
         # Build tab URL: strip existing query params, add ?tab=
         base_url = doc_url.split("?")[0]
         target_url = f"{base_url}?tab={tab_id}"
+
+        # Pre-sort heading named ranges by time for floor-match lookup
+        sorted_headings: list[tuple[int, str]] = []
+        if named_range_ids:
+            sorted_headings = sorted(
+                (self._ts_to_seconds(ts), nr_id)
+                for ts, nr_id in named_range_ids.items()
+            )
 
         docs_service = self._build_docs_service()
 
@@ -554,11 +572,15 @@ class GoogleDocsExporter:
                     abs_start = start_idx + m.start()
                     abs_end = start_idx + m.end()
 
-                    # Resolve deep link if named range exists for this timestamp
-                    ts_raw = m.group(1)
-                    ts_normalized = self._normalize_timestamp(ts_raw)
-                    if named_range_ids and ts_normalized in named_range_ids:
-                        nr_id = named_range_ids[ts_normalized]
+                    # Floor-match to nearest preceding heading
+                    ts_secs = self._ts_to_seconds(m.group(1))
+                    nr_id: str | None = None
+                    for sec, nrid in sorted_headings:
+                        if sec <= ts_secs:
+                            nr_id = nrid
+                        else:
+                            break
+                    if nr_id:
                         link_url = f"{base_url}?tab={tab_id}#namedrange={nr_id}"
                     else:
                         link_url = target_url
