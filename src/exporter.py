@@ -493,7 +493,7 @@ class GoogleDocsExporter:
                 if not paragraph:
                     continue
                 style = paragraph.get("paragraphStyle", {})
-                if not style.get("namedStyleType", "").startswith("HEADING_"):
+                if style.get("namedStyleType", "") != "HEADING_3":
                     continue
                 heading_id = style.get("headingId")
                 if not heading_id:
